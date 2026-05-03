@@ -3,7 +3,9 @@ import type {
 	TransactionListDto,
 	GetTransactionsParams,
 	ImportTransactionsParams,
-	ImportResult
+	ImportResult,
+	EnhanceImportRequest,
+	EnhanceImportResult
 } from './types';
 
 export const transactionsApi = {
@@ -20,6 +22,14 @@ export const transactionsApi = {
 			headers: { 'Content-Type': 'multipart/form-data' },
 			onUploadProgress: params.onUploadProgress
 		});
+		return response.data;
+	},
+
+	async enhanceImport(request: EnhanceImportRequest): Promise<EnhanceImportResult> {
+		const response = await apiClient.post<EnhanceImportResult>(
+			'/transactions/import/enhance',
+			request
+		);
 		return response.data;
 	}
 };

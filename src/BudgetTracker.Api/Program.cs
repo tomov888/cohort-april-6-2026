@@ -4,6 +4,10 @@ using BudgetTracker.Api.Features.Transactions;
 using BudgetTracker.Api.Features.Transactions.Import.Processing;
 using Microsoft.EntityFrameworkCore;
 using BudgetTracker.Api.Infrastructure;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
+using Azure.AI.OpenAI;
+using BudgetTracker.Api.Features.Transactions.Import.Enhancement;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,11 +39,34 @@ builder.Services.AddSwaggerGen(c =>
 	});
 });
 
+builder.Services.Configure<AzureAiConfiguration>(
+	builder.Configuration.GetSection(AzureAiConfiguration.SectionName));
+
+// Register IChatClient for Azure OpenAI
+builder.Services.AddSingleton<IChatClient>(sp =>
+{
+	var config = sp.GetRequiredService<IOptions<AzureAiConfiguration>>().Value;
+
+	if (string.IsNullOrEmpty(config.Endpoint) || string.IsNullOrEmpty(config.ApiKey))
+	{
+		throw new InvalidOperationException(
+			"Azure AI configuration is missing. Please configure Endpoint and ApiKey in user secrets.");
+	}
+
+	return new AzureOpenAIClient(
+		new Uri(config.Endpoint),
+		new System.ClientModel.ApiKeyCredential(config.ApiKey))
+		.GetChatClient(config.DeploymentName)
+		.AsIChatClient();
+});
+
+
 // Add Entity Framework
 builder.Services.AddDbContext<BudgetTrackerContext>(options =>
 	options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<CsvImporter>();
+builder.Services.AddScoped<ITransactionEnhancer, TransactionEnhancer>();
 
 // Add Auth with multiple schemes
 builder.Services.AddAuthorization(options =>
@@ -132,5 +159,12 @@ app
 	.MapAntiForgeryEndpoints()
 	.MapAuthEndpoints()
 	.MapTransactionEndpoints();
+
+app.MapGet("/api/ai/test", async (IChatClient chatClient) =>
+{
+	var response = await chatClient.GetResponseAsync("Say 'Hello from Azure OpenAI!' in exactly those words.");
+	return Results.Ok(new { message = response.Text });
+}).WithTags("AI Test");
+
 
 app.Run();
