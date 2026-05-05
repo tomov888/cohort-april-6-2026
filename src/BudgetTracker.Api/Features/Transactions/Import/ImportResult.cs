@@ -11,6 +11,8 @@ public class ImportResult
 
 	public string ImportSessionHash { get; set; } = string.Empty;
 	public List<TransactionEnhancementResult> Enhancements { get; set; } = new();
+	public string? DetectionMethod { get; set; }
+	public double DetectionConfidence { get; set; }
 }
 
 public class TransactionEnhancementResult

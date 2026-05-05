@@ -42,14 +42,13 @@ export interface TransactionEnhancement {
 }
 
 export interface ImportResult {
-	totalRows: number;
 	importedCount: number;
 	failedCount: number;
 	errors: string[];
-	sourceFile?: string;
-	importedAt: string;
 	importSessionHash: string;
 	enhancements: TransactionEnhancement[];
+	detectionMethod?: string; // "RuleBased" | "AI"
+	detectionConfidence?: number; // 0-100
 }
 
 export interface EnhanceImportRequest {

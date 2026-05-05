@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Azure.AI.OpenAI;
 using BudgetTracker.Api.Features.Transactions.Import.Enhancement;
+using BudgetTracker.Api.Features.Transactions.Import.Detection.Csv;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -67,6 +68,10 @@ builder.Services.AddDbContext<BudgetTrackerContext>(options =>
 
 builder.Services.AddScoped<CsvImporter>();
 builder.Services.AddScoped<ITransactionEnhancer, TransactionEnhancer>();
+builder.Services.AddScoped<ICsvStructureDetector, CsvStructureDetector>();
+builder.Services.AddScoped<ICsvDetector, CsvDetector>();
+builder.Services.AddScoped<ICsvAnalyzer, CsvAnalyzer>();
+builder.Services.AddScoped<IImageImporter, ImageImporter>();
 
 // Add Auth with multiple schemes
 builder.Services.AddAuthorization(options =>

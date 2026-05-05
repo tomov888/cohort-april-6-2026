@@ -4,6 +4,7 @@ using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
 using BudgetTracker.Api.Features.Transactions.Import;
+using BudgetTracker.Api.Features.Transactions.Import.Detection.Csv;
 
 namespace BudgetTracker.Api.Features.Transactions.Import.Processing;
 
@@ -12,31 +13,43 @@ public class CsvImporter
 	public async Task<(ImportResult Result, List<Transaction> Transactions)> ParseCsvAsync(
 		Stream csvStream, string sourceFileName, string userId, string account)
 	{
-		var importedAt = DateTime.UtcNow;
+		return await ParseCsvAsync(csvStream, sourceFileName, userId, account, null);
+	}
+
+	public async Task<(ImportResult Result, List<Transaction> Transactions)> ParseCsvAsync(
+		Stream csvStream,
+		string sourceFileName,
+		string userId,
+		string account,
+		CsvStructureDetectionResult? detectionResult)
+	{
 		var result = new ImportResult
 		{
 			SourceFile = sourceFileName,
-			ImportedAt = importedAt,
-			ImportSessionHash = ComputeSessionHash(sourceFileName, importedAt),
+			ImportedAt = DateTime.UtcNow
 		};
+
+		if (detectionResult != null)
+		{
+			result.DetectionMethod = detectionResult.DetectionMethod.ToString();
+			result.DetectionConfidence = detectionResult.ConfidenceScore;
+		}
 
 		var transactions = new List<Transaction>();
 
 		try
 		{
-			using var reader = new StreamReader(csvStream, Encoding.UTF8);
-			var firstLine = await reader.ReadLineAsync() ?? string.Empty;
-			var delimiter = DetectDelimiter(firstLine);
+			var culture = GetCultureInfo(detectionResult?.CultureCode);
+			var delimiter = detectionResult?.Delimiter ?? ',';
+			var columnMappings = detectionResult?.ColumnMappings ?? new Dictionary<string, string>();
 
-			csvStream.Position = 0;
-			using var csvReader = new StreamReader(csvStream, Encoding.UTF8);
-			using var csv = new CsvReader(csvReader, new CsvConfiguration(CultureInfo.InvariantCulture)
+			using var reader = new StreamReader(csvStream, Encoding.UTF8);
+			using var csv = new CsvReader(reader, new CsvConfiguration(culture)
 			{
 				HasHeaderRecord = true,
 				MissingFieldFound = null,
 				BadDataFound = null,
-				TrimOptions = TrimOptions.Trim,
-				Delimiter = delimiter,
+				Delimiter = delimiter.ToString()
 			});
 
 			var rowNumber = 0;
@@ -48,9 +61,20 @@ public class CsvImporter
 
 				try
 				{
-					var transaction = ParseRow(record, userId, account);
-					transactions.Add(transaction);
-					result.ImportedCount++;
+					var transaction = ParseTransactionRow(record, columnMappings, culture);
+					if (transaction != null)
+					{
+						transaction.UserId = userId;
+						transaction.Account = account;
+
+						transactions.Add(transaction);
+						result.ImportedCount++;
+					}
+					else
+					{
+						result.FailedCount++;
+						result.Errors.Add($"Row {rowNumber}: Failed to parse transaction");
+					}
 				}
 				catch (Exception ex)
 				{
@@ -59,99 +83,179 @@ public class CsvImporter
 				}
 			}
 
+			result.ImportedCount = transactions.Count;
+			result.FailedCount = result.TotalRows - result.ImportedCount;
+
 			return (result, transactions);
 		}
 		catch (Exception ex)
 		{
-			result.Errors.Add($"CSV parsing failed: {ex.Message}");
-			return (result, []);
+			result.Errors.Add($"CSV parsing error: {ex.Message}");
+			return (result, new List<Transaction>());
 		}
 	}
 
-	private static Transaction ParseRow(dynamic record, string userId, string account)
+	private static CultureInfo GetCultureInfo(string? cultureCode)
 	{
-		var row = (IDictionary<string, object>)record;
+		if (string.IsNullOrEmpty(cultureCode))
+			return CultureInfo.InvariantCulture;
 
-		var description = GetColumn(row, "Description", "Descrição", "Memo", "Details")
-			?? throw new InvalidOperationException("Description is required.");
-
-		var dateStr = GetColumn(row, "Date", "Transaction Date", "Data Lanc.", "Posting Date")
-			?? throw new InvalidOperationException("Date is required.");
-
-		var amountStr = GetColumn(row, "Amount", "Valor", "Transaction Amount", "Debit", "Credit")
-			?? throw new InvalidOperationException("Amount is required.");
-
-		var balanceStr = GetColumn(row, "Balance", "Running Balance", "Saldo", "Account Balance");
-		var category = GetColumn(row, "Category", "Type", "Transaction Type");
-
-		if (!TryParseDate(dateStr, out var date))
-			throw new InvalidOperationException($"Unrecognised date format: '{dateStr}'.");
-
-		if (!TryParseDecimal(amountStr, out var amount))
-			throw new InvalidOperationException($"Unrecognised amount format: '{amountStr}'.");
-
-		decimal? balance = null;
-		if (!string.IsNullOrWhiteSpace(balanceStr) && TryParseDecimal(balanceStr, out var parsedBalance))
-			balance = parsedBalance;
-
-		return new Transaction
+		try
 		{
-			Id = Guid.NewGuid(),
-			Date = date,
-			Description = description.Trim(),
-			Amount = amount,
-			Balance = balance,
-			Category = string.IsNullOrWhiteSpace(category) ? null : category.Trim(),
-			ImportedAt = DateTime.UtcNow,
-			Account = account,
-			UserId = userId,
-		};
+			return CultureInfo.GetCultureInfo(cultureCode);
+		}
+		catch
+		{
+			return CultureInfo.InvariantCulture;
+		}
 	}
 
-	private static string? GetColumn(IDictionary<string, object> row, params string[] candidates)
+	private Transaction? ParseTransactionRow(
+		dynamic record,
+		Dictionary<string, string> columnMappings,
+		CultureInfo culture)
 	{
-		foreach (var name in candidates)
+		try
 		{
-			if (row.TryGetValue(name, out var value) && value is not null)
+			var recordDict = (IDictionary<string, object>)record;
+
+			var description = GetMappedColumnValue(recordDict, columnMappings, "Description") ??
+			                  GetColumnValue(recordDict, "Description", "Memo", "Details");
+
+			var dateStr = GetMappedColumnValue(recordDict, columnMappings, "Date") ??
+			              GetColumnValue(recordDict, "Date", "Transaction Date", "Posting Date");
+
+			var amountStr = GetMappedColumnValue(recordDict, columnMappings, "Amount") ??
+			                GetColumnValue(recordDict, "Amount", "Transaction Amount", "Debit", "Credit");
+
+			var balanceStr = GetMappedColumnValue(recordDict, columnMappings, "Balance") ??
+			                 GetColumnValue(recordDict, "Balance", "Running Balance", "Account Balance");
+
+			var category = GetMappedColumnValue(recordDict, columnMappings, "Category") ??
+			               GetColumnValue(recordDict, "Category", "Type", "Transaction Type");
+
+			if (string.IsNullOrWhiteSpace(description))
 			{
-				var str = value.ToString()?.Trim();
-				if (!string.IsNullOrEmpty(str))
-					return str;
+				throw new ArgumentException("Description is required");
+			}
+
+			if (string.IsNullOrWhiteSpace(dateStr))
+			{
+				throw new ArgumentException("Date is required");
+			}
+
+			if (string.IsNullOrWhiteSpace(amountStr))
+			{
+				throw new ArgumentException("Amount is required");
+			}
+
+			if (!TryParseDate(dateStr, culture, out var date))
+			{
+				throw new ArgumentException($"Invalid date format: {dateStr}");
+			}
+
+			if (!TryParseAmount(amountStr, culture, out var amount))
+			{
+				throw new ArgumentException($"Invalid amount format: {amountStr}");
+			}
+
+			decimal? balance = null;
+			if (!string.IsNullOrWhiteSpace(balanceStr))
+			{
+				if (TryParseAmount(balanceStr, culture, out var parsedBalance))
+				{
+					balance = parsedBalance;
+				}
+			}
+
+			return new Transaction
+			{
+				Id = Guid.NewGuid(),
+				Date = date,
+				Description = description.Trim(),
+				Amount = amount,
+				Balance = balance,
+				Category = !string.IsNullOrWhiteSpace(category?.Trim()) ? category.Trim() : "Uncategorized",
+				ImportedAt = DateTime.UtcNow,
+			};
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
+	private static string? GetMappedColumnValue(
+		IDictionary<string, object> record,
+		Dictionary<string, string> columnMappings,
+		string standardField)
+	{
+		var sourceColumn = columnMappings
+			.FirstOrDefault(m => m.Value == standardField).Key;
+
+		if (!string.IsNullOrEmpty(sourceColumn) &&
+		    record.TryGetValue(sourceColumn, out var value) &&
+		    value != null)
+		{
+			return value.ToString()?.Trim();
+		}
+
+		return null;
+	}
+
+	private static string? GetColumnValue(IDictionary<string, object> record, params string[] columnNames)
+	{
+		foreach (var columnName in columnNames)
+		{
+			if (record.TryGetValue(columnName, out var value) && value != null)
+			{
+				return value.ToString()?.Trim();
 			}
 		}
 
 		return null;
 	}
 
-	private static bool TryParseDate(string value, out DateTime date)
+	private static bool TryParseDate(string dateStr, CultureInfo culture, out DateTime date)
 	{
-		string[] formats = ["yyyy-MM-dd", "MM/dd/yyyy", "dd/MM/yyyy"];
-		return DateTime.TryParseExact(value.Trim(), formats,
-			CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-			out date);
+		date = default;
+
+		if (DateTime.TryParse(dateStr.Trim(), culture,
+			    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out date))
+		{
+			return true;
+		}
+
+		if (DateTime.TryParse(dateStr.Trim(), CultureInfo.InvariantCulture,
+			    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out date))
+		{
+			return true;
+		}
+
+		return false;
 	}
 
-	private static bool TryParseDecimal(string value, out decimal result)
+	private static bool TryParseAmount(string amountStr, CultureInfo culture, out decimal amount)
 	{
-		var clean = value.Trim()
-			.Replace("$", "").Replace("€", "").Replace("£", "").Replace("¥", "")
+		amount = 0;
+
+		if (string.IsNullOrWhiteSpace(amountStr))
+			return false;
+
+		var cleanAmount = amountStr.Trim();
+		cleanAmount = cleanAmount
+			.Replace("$", "")
+			.Replace("€", "")
+			.Replace("£", "")
+			.Replace("¥", "")
+			.Replace("R$", "")
 			.Trim();
 
-		if (decimal.TryParse(clean, NumberStyles.Number, CultureInfo.InvariantCulture, out result))
+		if (decimal.TryParse(cleanAmount, NumberStyles.Currency, culture, out amount))
+		{
 			return true;
+		}
 
-		// Portuguese format: "4 888,00" — remove spaces, swap comma for dot
-		var ptClean = clean.Replace(" ", "").Replace(",", ".");
-		return decimal.TryParse(ptClean, NumberStyles.Number, CultureInfo.InvariantCulture, out result);
-	}
-
-	private static string DetectDelimiter(string headerLine)
-		=> headerLine.Count(c => c == ';') > headerLine.Count(c => c == ',') ? ";" : ",";
-
-	private static string ComputeSessionHash(string fileName, DateTime importedAt)
-	{
-		var input = $"{fileName}:{importedAt:O}";
-		var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-		return Convert.ToHexString(hash)[..16].ToLowerInvariant();
+		return decimal.TryParse(cleanAmount, NumberStyles.Currency, CultureInfo.InvariantCulture, out amount);
 	}
 }
