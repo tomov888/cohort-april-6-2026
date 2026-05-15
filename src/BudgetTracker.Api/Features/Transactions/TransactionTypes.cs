@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Pgvector;
 
 namespace BudgetTracker.Api.Features.Transactions;
 
@@ -42,6 +43,9 @@ public class Transaction
 
 	[MaxLength(50)]
 	public string? ImportSessionHash { get; set; }
+	
+	[Column(TypeName = "vector(1536)")]
+	public Vector? Embedding { get; set; }
 }
 
 public class TransactionDto

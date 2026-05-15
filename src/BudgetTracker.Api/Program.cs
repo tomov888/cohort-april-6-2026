@@ -7,6 +7,8 @@ using BudgetTracker.Api.Infrastructure;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Azure.AI.OpenAI;
+using BudgetTracker.Api.Features.Intelligence;
+using BudgetTracker.Api.Features.Intelligence.Search;
 using BudgetTracker.Api.Features.Transactions.Import.Enhancement;
 using BudgetTracker.Api.Features.Transactions.Import.Detection.Csv;
 
@@ -61,10 +63,21 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 		.AsIChatClient();
 });
 
+builder.Services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp =>
+{
+	var config = sp.GetRequiredService<IOptions<AzureAiConfiguration>>().Value;
+	return new AzureOpenAIClient(
+			new Uri(config.Endpoint),
+			new System.ClientModel.ApiKeyCredential(config.ApiKey))
+		.GetEmbeddingClient(config.EmbeddingDeploymentName)
+		.AsIEmbeddingGenerator();
+});
+
 
 // Add Entity Framework
 builder.Services.AddDbContext<BudgetTrackerContext>(options =>
-	options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+	options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+		o => o.UseVector()));
 
 builder.Services.AddScoped<CsvImporter>();
 builder.Services.AddScoped<ITransactionEnhancer, TransactionEnhancer>();
@@ -72,6 +85,10 @@ builder.Services.AddScoped<ICsvStructureDetector, CsvStructureDetector>();
 builder.Services.AddScoped<ICsvDetector, CsvDetector>();
 builder.Services.AddScoped<ICsvAnalyzer, CsvAnalyzer>();
 builder.Services.AddScoped<IImageImporter, ImageImporter>();
+builder.Services.AddScoped<IAzureEmbeddingService, AzureEmbeddingService>();
+builder.Services.AddHostedService<EmbeddingBackgroundService>();
+builder.Services.AddScoped<ISemanticSearchService, SemanticSearchService>();
+builder.Services.AddScoped<IQueryAssistantService, QueryAssistantService>();
 
 // Add Auth with multiple schemes
 builder.Services.AddAuthorization(options =>
@@ -163,7 +180,9 @@ app
 	.MapGroup("/api")
 	.MapAntiForgeryEndpoints()
 	.MapAuthEndpoints()
-	.MapTransactionEndpoints();
+	.MapTransactionEndpoints()
+	.MapQueryEndpoints()
+	;
 
 app.MapGet("/api/ai/test", async (IChatClient chatClient) =>
 {
