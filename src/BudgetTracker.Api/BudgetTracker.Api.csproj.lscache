@@ -65,12 +65,22 @@ Auth/
  ClaimsPrincipalExtensions.cs
  StaticApiKeyAuthenticationHandler.cs
 Features/Intelligence/
- QueryApi.cs
+ IntelligenceEndpoints.cs
+ Recommendations/
+  Recommendation.cs
+  RecommendationApi.cs
+  RecommendationBackgroundService.cs
+  RecommendationProcessor.cs
+  RecommendationRepository.cs
  Search/
   AzureEmbeddingService.cs
   EmbeddingBackgroundService.cs
+  QueryApi.cs
   QueryAssistantService.cs
   SemanticSearchService.cs
+ Tools/
+  AgentContext.cs
+  SearchTransactionsTool.cs
 Features/Transactions/Import/Detection/
  ColumnMappingDictionary.cs
  Csv/
@@ -103,6 +113,8 @@ Infrastructure/
   20260423162930_AddImportSessionHash.Designer.cs
   20260505210631_AddVectorEmbeddings.cs
   20260505210631_AddVectorEmbeddings.Designer.cs
+  20260515225418_AddRecommendations.cs
+  20260515225418_AddRecommendations.Designer.cs
   BudgetTrackerContextModelSnapshot.cs
 obj/Debug/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs

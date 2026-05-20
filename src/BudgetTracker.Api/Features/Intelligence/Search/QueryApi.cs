@@ -1,9 +1,8 @@
 using System.Security.Claims;
 using BudgetTracker.Api.Auth;
-using BudgetTracker.Api.Features.Intelligence.Search;
 using Microsoft.AspNetCore.Mvc;
 
-namespace BudgetTracker.Api.Features.Intelligence;
+namespace BudgetTracker.Api.Features.Intelligence.Search;
 
 public static class QueryApi
 {

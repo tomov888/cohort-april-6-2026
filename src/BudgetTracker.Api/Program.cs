@@ -7,10 +7,12 @@ using BudgetTracker.Api.Infrastructure;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Azure.AI.OpenAI;
-using BudgetTracker.Api.Features.Intelligence;
 using BudgetTracker.Api.Features.Intelligence.Search;
 using BudgetTracker.Api.Features.Transactions.Import.Enhancement;
 using BudgetTracker.Api.Features.Transactions.Import.Detection.Csv;
+using BudgetTracker.Api.Features.Intelligence.Recommendations;
+using BudgetTracker.Api.Features.Intelligence;
+using BudgetTracker.Api.Features.Intelligence.Tools;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -89,6 +91,14 @@ builder.Services.AddScoped<IAzureEmbeddingService, AzureEmbeddingService>();
 builder.Services.AddHostedService<EmbeddingBackgroundService>();
 builder.Services.AddScoped<ISemanticSearchService, SemanticSearchService>();
 builder.Services.AddScoped<IQueryAssistantService, QueryAssistantService>();
+builder.Services.AddScoped<IRecommendationRepository, RecommendationAgent>();
+builder.Services.AddScoped<IRecommendationWorker, RecommendationProcessor>();
+builder.Services.AddHostedService<RecommendationBackgroundService>();
+builder.Services.AddScoped<AgentContext>();
+builder.Services.AddScoped<IAgentContext>(sp => sp.GetRequiredService<AgentContext>());
+builder.Services.AddScoped<SearchTransactionsTool>();
+builder.Services.AddScoped<GetCategorySpendingTool>();
+builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
 
 // Add Auth with multiple schemes
 builder.Services.AddAuthorization(options =>
@@ -181,7 +191,7 @@ app
 	.MapAntiForgeryEndpoints()
 	.MapAuthEndpoints()
 	.MapTransactionEndpoints()
-	.MapQueryEndpoints()
+	.MapIntelligenceEndpoints()
 	;
 
 app.MapGet("/api/ai/test", async (IChatClient chatClient) =>
